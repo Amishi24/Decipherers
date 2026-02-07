@@ -1,94 +1,106 @@
-export const runtime = "nodejs";
-
-import { NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { pipeline } from '@xenova/transformers';
 
-// Use your working Gemini model
-const GEMINI_MODEL = "gemini-2.5-flash";
+// 1. Setup Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-type AIResult = { summary: string; rephrased: string };
+// 2. Define the NLI Model (Singleton)
+let nliClassifier: any = null;
 
-function buildPrompt(inputText: string, readingLevel: string) {
-  const levelInstructions: Record<string, string> = {
-    mild: `Rephrase rules:
-- Break long sentences into shorter ones (max 15 words)
-- Use simpler punctuation (avoid semicolons)
-- Keep most vocabulary but replace uncommon words
-- Active voice instead of passive
-- Write as a continuous paragraph (NO lists or numbers)`,
-
-    moderate: `Rephrase rules:
-- Use simple, everyday words
-- Max 12 words per sentence
-- One idea per sentence
-- Active voice only
-- Write as a continuous paragraph (NO lists or numbers)
-- Avoid abbreviations`,
-
-    severe: `Rephrase rules:
-- Very basic vocabulary (age 8-10)
-- Max 8 words per sentence
-- No metaphors or idioms
-- Bold key terms like **word**
-- Write as a continuous paragraph (NO lists or numbers)
-- Use "you" and "we" to make it personal`,
-
-    default: `Do not rephrase. Return original text.`,
-  };
-
-  const instructions = levelInstructions[readingLevel] || levelInstructions["moderate"];
-
-  return `
-    You are an expert dyslexia reading assistant.
-    Return ONLY valid JSON: {"summary":"...","rephrased":"..."}
-    
-    Summary rules:
-    - 2-4 short sentences
-    - Plain language
-    
-    ${instructions}
-    
-    IMPORTANT: Do not include "1.", "2.", or bullet points in the "rephrased" text. 
-    Just write standard sentences separated by periods.
-    
-    Text to process:
-    """${inputText}"""
-  `;
-}
-
-// Helper to clean JSON markdown
-function cleanJson(text: string) {
-  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+async function getNliClassifier() {
+  if (!nliClassifier) {
+    nliClassifier = await pipeline('zero-shot-classification', 'Xenova/nli-deberta-v3-xsmall');
+  }
+  return nliClassifier;
 }
 
 export async function POST(req: Request) {
   try {
     const { inputText, readingLevel } = await req.json();
-
     if (!inputText) return NextResponse.json({ error: "No text provided" }, { status: 400 });
 
-    const prompt = buildPrompt(inputText.slice(0, 15000), readingLevel || "moderate");
-    let data: AIResult | null = null;
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-    // 1. Try Gemini
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: GEMINI_MODEL, generationConfig: { responseMimeType: "application/json" } });
-        const result = await model.generateContent(prompt);
-        const raw = result.response.text();
-        data = JSON.parse(cleanJson(raw));
-      } catch (e) {
-        console.error("Gemini failed, trying fallback...", e);
-      }
+    let complexityInstruction = "";
+    if (readingLevel === 'mild') complexityInstruction = "Keep most original vocabulary. Just fix complex grammar. Do NOT simplify too much.";
+    if (readingLevel === 'moderate') complexityInstruction = "Simplify academic jargon to standard English. High school level.";
+    if (readingLevel === 'severe') complexityInstruction = "Simplify A LOT. Basic words only. Short sentences. Explain like I'm 5.";
+
+    // UPDATED PROMPT: Asks for both 'rephrased' array AND 'summary' string
+    const prompt = `
+      You are an expert accessibility assistant. 
+      Task: Simplify the text below.
+      Level: ${readingLevel.toUpperCase()} -> ${complexityInstruction}
+      
+      CRITICAL OUTPUT FORMAT:
+      Return a single JSON OBJECT with two keys:
+      1. "rephrased": A JSON ARRAY where each object has:
+         - "original": The EXACT sentence from the source text.
+         - "simplified": Your rewritten version.
+      2. "summary": A concise paragraph summarizing the entire text (max 3 sentences).
+      
+      SOURCE TEXT:
+      "${inputText.slice(0, 4000)}" 
+    `;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    // Clean JSON
+    const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    
+    let parsedData = { rephrased: [], summary: "" };
+    try {
+      parsedData = JSON.parse(cleanJson);
+    } catch (e) {
+      console.error("JSON Parse Error", e);
+      return NextResponse.json({ 
+        rephrased: [{ original: inputText, simplified: text, confidence: 50 }],
+        summary: "Error parsing summary."
+      });
     }
 
-    if (!data) throw new Error("All AI services failed");
+    // --- PART B: THE "JUDGE" (NLI Check) ---
+    const classifier = await getNliClassifier();
+    
+    // If the model didn't return an array for some reason, handle it
+    const segments = Array.isArray(parsedData.rephrased) ? parsedData.rephrased : [];
 
-    return NextResponse.json(data);
+    const verifiedSegments = await Promise.all(segments.map(async (seg: any) => {
+      const normInput = inputText.toLowerCase().replace(/\s+/g, ' ');
+      const normQuote = seg.original.toLowerCase().replace(/\s+/g, ' ');
+      
+      // 1. Grounding Check
+      if (!normInput.includes(normQuote.slice(0, 20))) { 
+         return { ...seg, confidence: 0, reason: "Quote not found" };
+      }
 
-  } catch (err: any) {
-    console.error("AI Error:", err);
-    return NextResponse.json({ error: "AI processing failed" }, { status: 500 });
+      // 2. NLI Check
+      try {
+        const output = await classifier(seg.original, [seg.simplified], {
+            hypothesis_template: "This means {}" 
+        });
+
+        let nliScore = output.scores[0] * 100;
+        if (seg.simplified.length > seg.original.length * 2) nliScore -= 20;
+
+        return { ...seg, confidence: Math.round(nliScore) };
+
+      } catch (err) {
+        console.error("NLI Error", err);
+        return { ...seg, confidence: 50 };
+      }
+    }));
+
+    return NextResponse.json({ 
+      rephrased: verifiedSegments, 
+      summary: parsedData.summary || "No summary generated." 
+    });
+
+  } catch (error) {
+    console.error("Pipeline Error:", error);
+    return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 }

@@ -13,6 +13,7 @@ import {
 import FileUploader from "@/components/ui/FileUploader";
 import { Loader2 } from "lucide-react"; 
 import { extractTextFromPdf } from "@/lib/pdf-loader"; 
+import MagicText from "@/components/magic-text";
 
 export default function UploadPage() {
   const router = useRouter();
@@ -50,15 +51,13 @@ export default function UploadPage() {
       <Card className="w-2/3 max-w-2xl border-2 bg-[#FFFAEF] text-[#020402] shadow-xl">
         
         <CardHeader className="text-start">
-          {/* Scalable font size [2.5em] instead of fixed text-4xl */}
           <CardTitle className="text-[2.5em] pb-4 font-bold">
-            {isLoading ? "Processing..." : "Upload File"}
+            <MagicText text={isLoading ? "Processing..." : "Upload File"} />
           </CardTitle>
-          {/* Scalable font size [1.2em] */}
           <CardDescription className="text-[1.2em] opacity-90">
-            {isLoading 
-              ? statusText 
-              : "We'll handle the rest! Supports scanned & digital PDFs."}
+             <MagicText 
+                text={isLoading ? statusText : "We'll handle the rest! Supports scanned & digital PDFs."} 
+             />
           </CardDescription>
         </CardHeader>
 
@@ -66,9 +65,11 @@ export default function UploadPage() {
           {isLoading ? (
             <div className="flex flex-col items-center gap-4 animate-in fade-in">
               <Loader2 size={64} className="animate-spin text-orange-500" />
-              <p className="text-[1.2em] text-gray-500 font-medium">
-                This may take a few seconds...
-              </p>
+              {/* FIXED: Removed wrapping <p>, passed classes to MagicText */}
+              <MagicText 
+                className="text-[1.2em] text-gray-500 font-medium" 
+                text="This may take a few seconds..." 
+              />
             </div>
           ) : (
             <FileUploader onFileRead={handleFileProcess} />
@@ -77,9 +78,11 @@ export default function UploadPage() {
 
         <CardFooter className="flex justify-center pb-8">
             {!isLoading && (
-                <p className="text-[0.9em] text-gray-400">
-                    Processed locally in your browser for privacy.
-                </p>
+                // FIXED: Removed wrapping <p>, passed classes to MagicText
+                <MagicText 
+                    className="text-[0.9em] text-gray-400" 
+                    text="Processed locally in your browser for privacy." 
+                />
             )}
         </CardFooter>
 

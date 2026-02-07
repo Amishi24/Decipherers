@@ -3,7 +3,10 @@
   "name": "Decipher.IO",
   "version": "1.0",
   "description": "AI-powered reading assistant for dyslexia.",
-  "permissions": ["sidePanel", "activeTab", "scripting", "contextMenus"], 
+  "permissions": ["sidePanel", "activeTab", "scripting", "contextMenus"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "service-worker.js"
   },

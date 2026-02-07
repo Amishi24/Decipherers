@@ -1,15 +1,15 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { Play, Pause, SkipBack, SkipForward, Loader2, Settings, FileText, Sparkles, Type, Palette, Mic, Layers } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Loader2, Settings, FileText, Sparkles, Type, Palette, Mic, Layers, ShieldCheck, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"; 
 import { toBionic } from "@/lib/bionic";
 
-// --- CONSTANTS ---
 const THEMES = [
   { name: "Green", value: "green", bg: "#d3efd7", text: "#1F2933" },
   { name: "Yellow", value: "yellow", bg: "#fdf6d8", text: "#1F2933" },
@@ -28,6 +28,15 @@ const OVERLAYS = [
   { name: "Grey", value: "grey", color: "rgba(128, 128, 128, 0.3)" },
 ];
 
+// UPDATED FONTS TO MATCH IMAGE
+const FONTS = [
+  { name: "Sans", value: "sans", family: "ui-sans-serif, system-ui, sans-serif" },
+  { name: "Mono", value: "mono", family: "ui-monospace, monospace" },
+  { name: "Dyslexia", value: "dyslexic", family: "var(--font-dyslexic), OpenDyslexic, Comic Sans MS, sans-serif" },
+  { name: "Atkinson", value: "atkinson", family: "'Atkinson Hyperlegible', sans-serif" },
+  { name: "Verdana", value: "verdana", family: "Verdana, sans-serif" },
+];
+
 const VOICES = [
   { id: "en-US-Journey-F", name: "Journey (Female)" },
   { id: "en-US-Journey-D", name: "Journey (Male)" },
@@ -35,10 +44,15 @@ const VOICES = [
   { id: "en-US-Studio-M", name: "Studio (Male)" },
 ];
 
+type Segment = {
+  original: string;
+  simplified: string;
+  confidence: number;
+};
+
 export default function SidebarPage() {
-  // --- STATE ---
   const [sourceText, setSourceText] = useState("");
-  const [rephrased, setRephrased] = useState("");
+  const [segments, setSegments] = useState<Segment[]>([]); 
   const [summary, setSummary] = useState("");
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [activeTab, setActiveTab] = useState("read");
@@ -49,14 +63,15 @@ export default function SidebarPage() {
   const [bionicMode, setBionicMode] = useState(false);
   const [speed, setSpeed] = useState(1.0);
   const [voice, setVoice] = useState("en-US-Journey-F"); 
+  const [confidenceMode, setConfidenceMode] = useState(false); 
 
   // Visuals
   const [theme, setTheme] = useState(THEMES[0]);
-  const [overlay, setOverlay] = useState(OVERLAYS[0]); // NEW: Overlay State
-  const [font, setFont] = useState("OpenDyslexic");
+  const [overlay, setOverlay] = useState(OVERLAYS[0]); 
+  const [font, setFont] = useState(FONTS[0]); // Default to Sans
   const [fontSize, setFontSize] = useState(18);
-  const [letterSpacing, setLetterSpacing] = useState(0);
-  const [lineHeight, setLineHeight] = useState(1.6);
+  const [letterSpacing, setLetterSpacing] = useState(0); 
+  const [lineHeight, setLineHeight] = useState(1.6);   
 
   // Audio State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -65,12 +80,11 @@ export default function SidebarPage() {
   const audioCache = useRef<Record<number, string>>({});
 
   // Parsing State
-  const [sentences, setSentences] = useState<string[]>([]);
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
 
   // --- 1. APPLY VISUAL SETTINGS ---
   const containerStyle = {
-    fontFamily: font === "OpenDyslexic" ? "var(--font-dyslexic)" : font,
+    fontFamily: font.family,
     fontSize: `${fontSize}px`,
     letterSpacing: `${letterSpacing}px`,
     lineHeight: lineHeight,
@@ -78,15 +92,7 @@ export default function SidebarPage() {
     color: theme.text,
   };
 
-  // --- 2. CLEAR CACHE ON SETTINGS CHANGE ---
-  useEffect(() => {
-    audioCache.current = {}; 
-    if (isPlaying && sentences.length > 0) {
-        handlePlay(currentSentenceIndex);
-    }
-  }, [speed, voice]); 
-
-  // --- 3. LISTENER FOR EXTENSION DATA ---
+  // --- 2. LISTENER FOR EXTENSION DATA ---
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === "DECIPHER_TEXT") {
@@ -105,7 +111,7 @@ export default function SidebarPage() {
     };
   }, []);
 
-  // --- 4. AI PROCESSING ---
+  // --- 3. AI PROCESSING ---
   useEffect(() => {
     if (!sourceText) return;
     const fetchAI = async () => {
@@ -117,7 +123,11 @@ export default function SidebarPage() {
                 body: JSON.stringify({ inputText: sourceText, readingLevel: level })
             });
             const data = await res.json();
-            if (data.rephrased) setRephrased(data.rephrased);
+            if (Array.isArray(data.rephrased)) {
+                setSegments(data.rephrased);
+            } else {
+                setSegments([{ original: sourceText, simplified: data.rephrased || "", confidence: 100 }]);
+            }
             if (data.summary) setSummary(data.summary);
         } catch (e) { console.error("AI Error", e); } 
         finally { setIsLoadingAI(false); }
@@ -125,27 +135,50 @@ export default function SidebarPage() {
     fetchAI();
   }, [sourceText, level]);
 
-  // --- 5. SENTENCE PARSING ---
+  // --- 4. TTS HANDLING ---
+  
   useEffect(() => {
-    const textToSplit = rephrased || sourceText;
-    if (!textToSplit) return;
-    
-    const cleanText = textToSplit
-        .replace(/^\d+\.\s*/gm, "")
-        .replace(/\n\d+\.\s*/g, " ") 
-        .replace(/[*•-]\s*/g, ""); 
-
-    const split = cleanText.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleanText];
-    const cleanSentences = split.map(s => s.trim()).filter(s => s.length > 3);
-    
-    setSentences(cleanSentences);
+    if (segments.length === 0) return;
+    audioCache.current = {};
     setCurrentSentenceIndex(0);
+    setIsPlaying(false);
+    if (audioRef.current) audioRef.current.pause();
+
+    const preloadFirst = async () => {
+        const url = await fetchAudioBlob(segments[0].simplified);
+        if (url) audioCache.current[0] = url;
+    };
+    preloadFirst();
+  }, [segments]); 
+
+  useEffect(() => {
+    if (segments.length === 0) return;
     audioCache.current = {}; 
     
-    if (cleanSentences.length > 0) {
-        fetchAudioBlob(cleanSentences[0]).then(url => { if (url) audioCache.current[0] = url; });
-    }
-  }, [rephrased, sourceText]);
+    const hotReloadAudio = async () => {
+         const wasPlaying = isPlaying;
+         if (audioRef.current) audioRef.current.pause();
+         
+         setIsBuffering(true);
+         const url = await fetchAudioBlob(segments[currentSentenceIndex].simplified);
+         
+         if (url) {
+             audioCache.current[currentSentenceIndex] = url;
+             if (wasPlaying && audioRef.current) {
+                 audioRef.current.src = url;
+                 audioRef.current.play();
+             }
+         }
+         setIsBuffering(false);
+
+         if (segments[currentSentenceIndex + 1]) {
+             fetchAudioBlob(segments[currentSentenceIndex + 1].simplified).then(u => {
+                 if (u) audioCache.current[currentSentenceIndex + 1] = u;
+             });
+         }
+    };
+    hotReloadAudio();
+  }, [voice, speed]); 
 
   // --- AUDIO LOGIC ---
   const fetchAudioBlob = async (text: string) => {
@@ -163,11 +196,11 @@ export default function SidebarPage() {
   };
 
   const handlePlay = async (index: number) => {
-    if (!sentences[index]) return;
+    if (!segments[index]) return;
     let src = audioCache.current[index];
     if (!src) {
         setIsBuffering(true);
-        src = await fetchAudioBlob(sentences[index]) || "";
+        src = await fetchAudioBlob(segments[index].simplified) || "";
         audioCache.current[index] = src;
         setIsBuffering(false);
     }
@@ -176,8 +209,8 @@ export default function SidebarPage() {
         audioRef.current.play();
         setIsPlaying(true);
         const nextIdx = index + 1;
-        if (sentences[nextIdx] && !audioCache.current[nextIdx]) {
-            fetchAudioBlob(sentences[nextIdx]).then(url => { if (url) audioCache.current[nextIdx] = url; });
+        if (segments[nextIdx] && !audioCache.current[nextIdx]) {
+            fetchAudioBlob(segments[nextIdx].simplified).then(url => { if (url) audioCache.current[nextIdx] = url; });
         }
     }
   };
@@ -189,7 +222,7 @@ export default function SidebarPage() {
   };
 
   const changeSentence = (newIndex: number) => {
-    if (newIndex < 0 || newIndex >= sentences.length) return;
+    if (newIndex < 0 || newIndex >= segments.length) return;
     const wasPlaying = isPlaying || (audioRef.current && !audioRef.current.paused);
     setCurrentSentenceIndex(newIndex);
     if (wasPlaying) handlePlay(newIndex); else setIsPlaying(false);
@@ -200,16 +233,39 @@ export default function SidebarPage() {
     return text;
   };
 
+  // --- 5. UNIFIED STYLE HELPER (Exact match to Website) ---
+  const getUnifiedStyle = (index: number, confidence: number) => {
+    const isActive = index === currentSentenceIndex;
+    const isLowConfidence = confidenceMode && confidence < 70;
+    const isMedConfidence = confidenceMode && confidence < 90;
+
+    // Base Style
+    let base = "inline decoration-clone py-1 rounded px-1 transition-colors duration-300 ";
+
+    if (isActive) {
+        // ACTIVE STATE: Big Border Box
+        if (isLowConfidence) return base + "bg-red-100 border-b-2 border-red-400 text-red-900";
+        if (isMedConfidence) return base + "bg-yellow-100 border-b-2 border-yellow-400 text-yellow-900";
+        // Default Active (Blue)
+        return base + "bg-blue-100 border-b-2 border-blue-400 text-blue-900";
+    } else {
+        // INACTIVE STATE: Subtle Backgrounds (No extra borders, matching website)
+        if (isLowConfidence) return base + "bg-red-50 text-gray-900 cursor-help";
+        if (isMedConfidence) return base + "bg-yellow-50 text-gray-900 cursor-help";
+        // Default Inactive (Hover only)
+        return base + "hover:bg-gray-100 text-gray-800 border-b-2 border-transparent";
+    }
+  };
+
   return (
+    <TooltipProvider>
     <div className="h-screen flex flex-col transition-colors duration-300 overflow-hidden relative" style={containerStyle}>
       
-      {/* --- GLOBAL OVERLAY (IRLEN SUPPORT) --- */}
-      {/* Pointer events none ensures you can click 'through' the color tint */}
+      {/* GLOBAL OVERLAY */}
       <div 
         className="absolute inset-0 z-50 pointer-events-none mix-blend-multiply" 
         style={{ backgroundColor: overlay.color }}
       />
-
       <audio ref={audioRef} onEnded={() => setIsPlaying(false)} />
 
       {/* --- HEADER --- */}
@@ -256,7 +312,7 @@ export default function SidebarPage() {
                 </div>
             </div>
 
-            {/* NEW: OVERLAY (IRLEN) SECTION */}
+            {/* OVERLAY (IRLEN) */}
             <div className="space-y-3 pt-4 border-t border-black/10">
                 <Label className="flex items-center gap-2 text-sm uppercase tracking-wider opacity-70 font-bold"><Layers size={14}/> Irlen Overlays</Label>
                 <div className="flex gap-3 flex-wrap">
@@ -265,7 +321,7 @@ export default function SidebarPage() {
                             key={o.value}
                             onClick={() => setOverlay(o)}
                             className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center text-[10px] font-bold ${overlay.value === o.value ? "border-black scale-110" : "border-gray-200"}`}
-                            style={{ backgroundColor: o.value === 'none' ? 'white' : o.color.replace('0.2', '0.5') }} // Show stronger color in button
+                            style={{ backgroundColor: o.value === 'none' ? 'white' : o.color.replace('0.2', '0.5') }}
                             title={o.name}
                         >
                             {o.value === 'none' && "OFF"}
@@ -274,19 +330,21 @@ export default function SidebarPage() {
                 </div>
             </div>
 
-            {/* TYPOGRAPHY */}
+            {/* TYPOGRAPHY (Updated Fonts) */}
             <div className="space-y-4 pt-4 border-t border-black/10">
                 <Label className="flex items-center gap-2 text-sm uppercase tracking-wider opacity-70 font-bold"><Type size={14}/> Typography</Label>
                 
-                <Select value={font} onValueChange={setFont}>
+                {/* NEW FONT SELECTOR MATCHING IMAGE */}
+                <Select value={font.value} onValueChange={(val) => setFont(FONTS.find(f => f.value === val) || FONTS[0])}>
                   <SelectTrigger className="w-full bg-white/50 border-black/20">
                     <SelectValue placeholder="Select Font" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="OpenDyslexic">OpenDyslexic</SelectItem>
-                    <SelectItem value="Arial">Arial</SelectItem>
-                    <SelectItem value="Verdana">Verdana</SelectItem>
-                    <SelectItem value="Comic Sans MS">Comic Sans</SelectItem>
+                    {FONTS.map(f => (
+                        <SelectItem key={f.value} value={f.value} style={{ fontFamily: f.family }}>
+                            {f.name}
+                        </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
 
@@ -299,9 +357,14 @@ export default function SidebarPage() {
                    <div className="flex justify-between text-xs opacity-70"><span>Line Height</span><span>{lineHeight}</span></div>
                    <Slider min={1} max={2.5} step={0.1} value={[lineHeight]} onValueChange={v => setLineHeight(v[0])} />
                 </div>
+
+                <div className="space-y-2">
+                   <div className="flex justify-between text-xs opacity-70"><span>Letter Spacing</span><span>{letterSpacing}px</span></div>
+                   <Slider min={0} max={5} step={0.5} value={[letterSpacing]} onValueChange={v => setLetterSpacing(v[0])} />
+                </div>
             </div>
 
-            {/* AI / INTELLIGENCE SETTINGS */}
+            {/* INTELLIGENCE SETTINGS */}
             <div className="space-y-4 pt-4 border-t border-black/10">
                 <Label className="flex items-center gap-2 text-sm uppercase tracking-wider opacity-70 font-bold"><Sparkles size={14}/> Intelligence</Label>
                 
@@ -313,6 +376,17 @@ export default function SidebarPage() {
                         </div>
                     ))}
                 </RadioGroup>
+
+                {/* CONFIDENCE */}
+                <div className="pt-2">
+                     <label className="flex items-center gap-3 cursor-pointer group">
+                        <input type="checkbox" checked={confidenceMode} onChange={e => setConfidenceMode(e.target.checked)} className="w-4 h-4 accent-black" />
+                        <span className="text-sm font-bold flex items-center gap-2">
+                            <ShieldCheck size={14} className={confidenceMode ? "text-green-600" : "text-gray-400"}/> 
+                            AI Confidence
+                        </span>
+                     </label>
+                </div>
 
                 <div className="flex items-center justify-between pt-2">
                    <Label>Focus Mode</Label>
@@ -345,23 +419,55 @@ export default function SidebarPage() {
             </div>
           </TabsContent>
 
-          {/* --- TAB 2: READ --- */}
+          {/* --- TAB 2: READ (Unified Style + Fixed Tooltip) --- */}
           <TabsContent value="read" className="flex-1 flex flex-col overflow-hidden relative">
              <div className="flex-grow overflow-y-auto p-4 pb-24 space-y-6">
-                {isLoadingAI ? <div className="animate-pulse opacity-60">Refining text...</div> : 
+                {isLoadingAI ? <div className="animate-pulse opacity-60">Verifying accuracy...</div> : 
                  sentenceFocusMode ? (
-                    <div className="p-4 rounded-xl border-l-4 shadow-sm bg-black/5 border-black/20">
-                        <p className="font-medium">
-                             {renderText(sentences[currentSentenceIndex] || "")}
-                        </p>
+                    // FOCUS MODE
+                    <div>
+                        <div className={`p-4 rounded-xl border-l-4 shadow-sm bg-black/5 ${
+                            confidenceMode && (segments[currentSentenceIndex]?.confidence || 100) < 70 
+                            ? "border-red-400 bg-red-50" 
+                            : "border-black/20"
+                        }`}>
+                            <p className="font-medium">
+                                {renderText(segments[currentSentenceIndex]?.simplified || "")}
+                            </p>
+                        </div>
+                         {confidenceMode && (segments[currentSentenceIndex]?.confidence || 100) < 70 && (
+                            <p className="text-red-500 text-xs mt-2 flex items-center gap-2"><AlertTriangle size={12}/> Low confidence: Check original.</p>
+                         )}
                     </div>
                  ) : (
+                    // STANDARD VIEW
                     <div className="text-justify">
-                    {sentences.map((s, i) => (
-                        <span key={i} className={`mr-1 transition-colors ${i === currentSentenceIndex ? "bg-yellow-300/50 rounded px-1" : ""}`}>
-                            {renderText(s)}{" "}
-                        </span>
-                    ))}
+                    {segments.map((seg, i) => {
+                        const styleClass = getUnifiedStyle(i, seg.confidence);
+                        const needsTooltip = confidenceMode && seg.confidence < 90;
+                        
+                        const content = (
+                            <span key={i} className={styleClass}>
+                                {renderText(seg.simplified)}{" "}
+                            </span>
+                        );
+
+                        if (needsTooltip) {
+                           return (
+                               <Tooltip key={i}>
+                                 <TooltipTrigger asChild>{content}</TooltipTrigger>
+                                 <TooltipContent className="max-w-[250px] bg-black text-white p-3 text-xs z-[60] shadow-xl border border-white/20">
+                                    <p className="font-bold text-yellow-400 mb-2">Original Text:</p>
+                                    <p className="text-gray-100 italic">"{seg.original}"</p>
+                                    <p className="text-gray-400 mt-2 text-[10px] uppercase font-bold tracking-wide">
+                                        Confidence: {Math.round(seg.confidence)}%
+                                    </p>
+                                 </TooltipContent>
+                               </Tooltip>
+                           );
+                        }
+                        return content;
+                    })}
                     </div>
                  )
                 }
@@ -391,5 +497,6 @@ export default function SidebarPage() {
         </Tabs>
       )}
     </div>
+    </TooltipProvider>
   );
 }
