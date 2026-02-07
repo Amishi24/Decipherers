@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { Play, Pause, SkipBack, SkipForward, Loader2, Mic } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -13,6 +13,16 @@ const VOICES = [
   { id: "en-US-Journey-D", name: "Journey (Male)" },
   { id: "en-US-Studio-O", name: "Studio (Female)" },
   { id: "en-US-Studio-M", name: "Studio (Male)" },
+];
+
+const OVERLAYS = [
+  { name: "None", value: "none", color: "transparent" },
+  { name: "Blue", value: "blue", color: "rgba(0, 153, 255, 0.2)" },
+  { name: "Yellow", value: "yellow", color: "rgba(255, 255, 0, 0.2)" },
+  { name: "Green", value: "green", color: "rgba(0, 255, 0, 0.2)" },
+  { name: "Rose", value: "rose", color: "rgba(255, 0, 128, 0.2)" },
+  { name: "Peach", value: "peach", color: "rgba(255, 165, 0, 0.2)" },
+  { name: "Grey", value: "grey", color: "rgba(128, 128, 128, 0.3)" },
 ];
 
 export default function Refined() {
@@ -31,12 +41,13 @@ export default function Refined() {
   // Audio State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [voice, setVoice] = useState("en-US-Journey-F"); // Default Voice
+  const [voice, setVoice] = useState("en-US-Journey-F"); 
   const [speed, setSpeed] = useState(1.0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
   const audioCache = useRef<Record<number, string>>({});
   const [bionicMode, setBionicMode] = useState(false);
+  const [overlay, setOverlay] = useState(OVERLAYS[0]); // NEW: Overlay State
 
   // --- 1. INITIALIZATION ---
   useEffect(() => {
@@ -56,7 +67,7 @@ export default function Refined() {
     if (isPlaying && sentences.length > 0) {
         handlePlay(currentSentenceIndex);
     }
-  }, [speed, voice]); // Refreshes when Voice or Speed changes
+  }, [speed, voice]); 
 
   // --- 3. AI FETCHING ---
   useEffect(() => {
@@ -165,11 +176,18 @@ export default function Refined() {
   };
 
   return (
-    <div className="h-screen grid grid-cols-[1.5fr_3fr_3fr] gap-4 p-4">
+    <div className="h-screen grid grid-cols-[1.5fr_3fr_3fr] gap-4 p-4 relative">
+      
+      {/* --- GLOBAL OVERLAY (IRLEN SUPPORT) --- */}
+      <div 
+        className="absolute inset-0 z-50 pointer-events-none mix-blend-multiply" 
+        style={{ backgroundColor: overlay.color }}
+      />
+
       <audio ref={audioRef} onEnded={() => setIsPlaying(false)} />
 
       {/* --- COL 1: CONTROLS --- */}
-      <div className="border-2 p-4 rounded-xl bg-white overflow-y-auto">
+      <div className="border-2 p-4 rounded-xl bg-white overflow-y-auto relative z-40">
         <h2 className="font-bold text-[1.8em] mb-8">Adjustments</h2>
         
         <div className="space-y-6">
@@ -183,6 +201,24 @@ export default function Refined() {
                         </div>
                     ))}
                 </RadioGroup>
+            </div>
+
+            {/* NEW: OVERLAY (IRLEN) SECTION */}
+            <div className="pt-6 border-t">
+                <Label className="text-[1.1em] font-bold mb-2 flex items-center gap-2"><Layers size={18}/> Irlen Overlays</Label>
+                <div className="flex gap-2 flex-wrap">
+                    {OVERLAYS.map((o) => (
+                        <button
+                            key={o.value}
+                            onClick={() => setOverlay(o)}
+                            className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center text-[10px] font-bold ${overlay.value === o.value ? "border-black scale-110" : "border-gray-200"}`}
+                            style={{ backgroundColor: o.value === 'none' ? 'white' : o.color.replace('0.2', '0.5') }}
+                            title={o.name}
+                        >
+                            {o.value === 'none' && "OFF"}
+                        </button>
+                    ))}
+                </div>
             </div>
 
             <div className="pt-6 border-t">
@@ -214,7 +250,7 @@ export default function Refined() {
       </div>
 
       {/* --- COL 2: REFINED TEXT --- */}
-      <div className="border-2 p-6 rounded-xl bg-white flex flex-col relative h-full">
+      <div className="border-2 p-6 rounded-xl bg-white flex flex-col relative h-full z-40">
         <div className="flex justify-between items-center mb-6">
             <h2 className="font-bold text-[2em]">Refined Text</h2>
         </div>
@@ -259,7 +295,7 @@ export default function Refined() {
       </div>
 
       {/* --- COL 3: SUMMARY --- */}
-      <div className="border-2 p-6 rounded-xl bg-white overflow-y-auto">
+      <div className="border-2 p-6 rounded-xl bg-white overflow-y-auto z-40">
          <h2 className="font-bold text-[2em] mb-6">Summary</h2>
          <div className="text-[1.1em] font-medium text-gray-700">
             {summary ? renderText(summary) : "Loading summary..."}

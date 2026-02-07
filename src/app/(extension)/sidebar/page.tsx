@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { Play, Pause, SkipBack, SkipForward, Loader2, Settings, FileText, Sparkles, Type, Palette, Mic } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Loader2, Settings, FileText, Sparkles, Type, Palette, Mic, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -16,6 +16,16 @@ const THEMES = [
   { name: "Blue", value: "blue", bg: "#dbeafe", text: "#1e3a8a" },
   { name: "Cream", value: "cream", bg: "#fdfbf7", text: "#333333" },
   { name: "Dark", value: "dark", bg: "#1f2937", text: "#f3f4f6" },
+];
+
+const OVERLAYS = [
+  { name: "None", value: "none", color: "transparent" },
+  { name: "Blue", value: "blue", color: "rgba(0, 153, 255, 0.2)" },
+  { name: "Yellow", value: "yellow", color: "rgba(255, 255, 0, 0.2)" },
+  { name: "Green", value: "green", color: "rgba(0, 255, 0, 0.2)" },
+  { name: "Rose", value: "rose", color: "rgba(255, 0, 128, 0.2)" },
+  { name: "Peach", value: "peach", color: "rgba(255, 165, 0, 0.2)" },
+  { name: "Grey", value: "grey", color: "rgba(128, 128, 128, 0.3)" },
 ];
 
 const VOICES = [
@@ -38,10 +48,11 @@ export default function SidebarPage() {
   const [sentenceFocusMode, setSentenceFocusMode] = useState(false);
   const [bionicMode, setBionicMode] = useState(false);
   const [speed, setSpeed] = useState(1.0);
-  const [voice, setVoice] = useState("en-US-Journey-F"); // New Voice State
+  const [voice, setVoice] = useState("en-US-Journey-F"); 
 
   // Visuals
   const [theme, setTheme] = useState(THEMES[0]);
+  const [overlay, setOverlay] = useState(OVERLAYS[0]); // NEW: Overlay State
   const [font, setFont] = useState("OpenDyslexic");
   const [fontSize, setFontSize] = useState(18);
   const [letterSpacing, setLetterSpacing] = useState(0);
@@ -73,7 +84,7 @@ export default function SidebarPage() {
     if (isPlaying && sentences.length > 0) {
         handlePlay(currentSentenceIndex);
     }
-  }, [speed, voice]); // RELOAD AUDIO IF VOICE CHANGES
+  }, [speed, voice]); 
 
   // --- 3. LISTENER FOR EXTENSION DATA ---
   useEffect(() => {
@@ -190,17 +201,25 @@ export default function SidebarPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col transition-colors duration-300 overflow-hidden" style={containerStyle}>
+    <div className="h-screen flex flex-col transition-colors duration-300 overflow-hidden relative" style={containerStyle}>
+      
+      {/* --- GLOBAL OVERLAY (IRLEN SUPPORT) --- */}
+      {/* Pointer events none ensures you can click 'through' the color tint */}
+      <div 
+        className="absolute inset-0 z-50 pointer-events-none mix-blend-multiply" 
+        style={{ backgroundColor: overlay.color }}
+      />
+
       <audio ref={audioRef} onEnded={() => setIsPlaying(false)} />
 
       {/* --- HEADER --- */}
-      <div className="p-4 border-b flex justify-between items-center bg-black/5 shadow-sm">
-        <h1 className="font-bold text-xl">Decipher.IO</h1>
+      <div className="p-4 border-b flex justify-between items-center bg-black/5 shadow-sm relative z-40">
+        <h1 className="font-bold text-xl">Decipher.io</h1>
         {isLoadingAI && <Loader2 className="animate-spin h-5 w-5 opacity-70" />}
       </div>
 
       {!sourceText ? (
-        <div className="flex-1 flex flex-col justify-center items-center p-8 text-center opacity-60">
+        <div className="flex-1 flex flex-col justify-center items-center p-8 text-center opacity-60 z-40">
            <FileText className="w-16 h-16 mb-4 opacity-30" />
            <p className="text-lg mb-6">Open a website and click below!</p>
            <Button 
@@ -211,7 +230,7 @@ export default function SidebarPage() {
            </Button>
         </div>
       ) : (
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden relative z-40">
           
           <TabsList className="grid w-full grid-cols-3 rounded-none border-b h-12 bg-transparent">
             <TabsTrigger value="settings" className="data-[state=active]:bg-black/10"><Settings className="w-4 h-4 mr-2"/> Set</TabsTrigger>
@@ -233,6 +252,24 @@ export default function SidebarPage() {
                             style={{ backgroundColor: t.bg }}
                             title={t.name}
                         />
+                    ))}
+                </div>
+            </div>
+
+            {/* NEW: OVERLAY (IRLEN) SECTION */}
+            <div className="space-y-3 pt-4 border-t border-black/10">
+                <Label className="flex items-center gap-2 text-sm uppercase tracking-wider opacity-70 font-bold"><Layers size={14}/> Irlen Overlays</Label>
+                <div className="flex gap-3 flex-wrap">
+                    {OVERLAYS.map((o) => (
+                        <button
+                            key={o.value}
+                            onClick={() => setOverlay(o)}
+                            className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center text-[10px] font-bold ${overlay.value === o.value ? "border-black scale-110" : "border-gray-200"}`}
+                            style={{ backgroundColor: o.value === 'none' ? 'white' : o.color.replace('0.2', '0.5') }} // Show stronger color in button
+                            title={o.name}
+                        >
+                            {o.value === 'none' && "OFF"}
+                        </button>
                     ))}
                 </div>
             </div>
@@ -259,17 +296,12 @@ export default function SidebarPage() {
                 </div>
                 
                 <div className="space-y-2">
-                   <div className="flex justify-between text-xs opacity-70"><span>Spacing</span><span>{letterSpacing}px</span></div>
-                   <Slider min={0} max={5} step={0.5} value={[letterSpacing]} onValueChange={v => setLetterSpacing(v[0])} />
-                </div>
-                
-                <div className="space-y-2">
                    <div className="flex justify-between text-xs opacity-70"><span>Line Height</span><span>{lineHeight}</span></div>
                    <Slider min={1} max={2.5} step={0.1} value={[lineHeight]} onValueChange={v => setLineHeight(v[0])} />
                 </div>
             </div>
 
-            {/* AI / INTELLIGENCE SETTINGS (WITH VOICE) */}
+            {/* AI / INTELLIGENCE SETTINGS */}
             <div className="space-y-4 pt-4 border-t border-black/10">
                 <Label className="flex items-center gap-2 text-sm uppercase tracking-wider opacity-70 font-bold"><Sparkles size={14}/> Intelligence</Label>
                 
@@ -292,7 +324,6 @@ export default function SidebarPage() {
                    <input type="checkbox" checked={bionicMode} onChange={e => setBionicMode(e.target.checked)} className="w-4 h-4 accent-black" />
                 </div>
 
-                {/* VOICE SELECTOR */}
                 <div className="pt-2">
                     <Label className="text-xs opacity-70 mb-2 block">Narrator Voice</Label>
                     <Select value={voice} onValueChange={setVoice}>
