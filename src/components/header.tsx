@@ -21,7 +21,7 @@ export default function Header() {
              />
           </div>
           <h1 className="text-2xl font-bold text-black tracking-tight">
-            Decipher AI
+            Decipher.IO
           </h1>
         </Link>
       </div>

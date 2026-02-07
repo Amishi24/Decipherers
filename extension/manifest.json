@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Decipher.IO",
+  "version": "1.0",
+  "description": "AI-powered reading assistant for dyslexia.",
+  "permissions": ["sidePanel", "activeTab", "scripting", "contextMenus"], 
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Reader"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}

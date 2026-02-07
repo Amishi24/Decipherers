@@ -1,11 +1,19 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { Play, Pause, SkipBack, SkipForward, Loader2 } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Loader2, Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Slider } from "@/components/ui/slider";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toBionic } from "@/lib/bionic";
+
+const VOICES = [
+  { id: "en-US-Journey-F", name: "Journey (Female)" },
+  { id: "en-US-Journey-D", name: "Journey (Male)" },
+  { id: "en-US-Studio-O", name: "Studio (Female)" },
+  { id: "en-US-Studio-M", name: "Studio (Male)" },
+];
 
 export default function Refined() {
   // --- STATE ---
@@ -18,12 +26,12 @@ export default function Refined() {
   // Sentence Mode State
   const [sentences, setSentences] = useState<string[]>([]);
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
-  const [sentenceFocusMode, setSentenceFocusMode] = useState(true);
+  const [sentenceFocusMode, setSentenceFocusMode] = useState(false);
 
   // Audio State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [voice, setVoice] = useState("en-US-Journey-F");
+  const [voice, setVoice] = useState("en-US-Journey-F"); // Default Voice
   const [speed, setSpeed] = useState(1.0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
@@ -48,7 +56,7 @@ export default function Refined() {
     if (isPlaying && sentences.length > 0) {
         handlePlay(currentSentenceIndex);
     }
-  }, [speed, voice]);
+  }, [speed, voice]); // Refreshes when Voice or Speed changes
 
   // --- 3. AI FETCHING ---
   useEffect(() => {
@@ -85,7 +93,6 @@ export default function Refined() {
         .replace(/[*•-]\s*/g, ""); 
 
     const split = cleanText.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleanText];
-    
     const cleanSentences = split
         .map(s => s.trim())
         .filter(s => s.length > 3 && !/^\d+\.$/.test(s));
@@ -115,61 +122,41 @@ export default function Refined() {
             const blob = new Blob([new Uint8Array(byteNums)], { type: 'audio/mp3' });
             return URL.createObjectURL(blob);
         }
-    } catch (e) {
-        console.error("Fetch failed", e);
-    }
+    } catch (e) { console.error("Fetch failed", e); }
     return null;
   };
 
   const handlePlay = async (index: number) => {
     if (!sentences[index]) return;
-
     let src = audioCache.current[index];
-
     if (!src) {
         setIsBuffering(true);
         src = await fetchAudioBlob(sentences[index]) || "";
         audioCache.current[index] = src;
         setIsBuffering(false);
     }
-
     if (src && audioRef.current) {
         audioRef.current.src = src;
         audioRef.current.play();
         setIsPlaying(true);
-
         const nextIdx = index + 1;
         if (sentences[nextIdx] && !audioCache.current[nextIdx]) {
-            fetchAudioBlob(sentences[nextIdx]).then(url => {
-                if (url) audioCache.current[nextIdx] = url;
-            });
+            fetchAudioBlob(sentences[nextIdx]).then(url => { if (url) audioCache.current[nextIdx] = url; });
         }
     }
   };
 
   const togglePlayPause = () => {
-    if (isPlaying) {
-        audioRef.current?.pause();
-        setIsPlaying(false);
-    } else {
-        if (audioRef.current?.src && !audioRef.current.ended) {
-            audioRef.current.play();
-            setIsPlaying(true);
-        } else {
-            handlePlay(currentSentenceIndex);
-        }
-    }
+    if (isPlaying) { audioRef.current?.pause(); setIsPlaying(false); }
+    else if (audioRef.current?.src && !audioRef.current.ended) { audioRef.current.play(); setIsPlaying(true); }
+    else handlePlay(currentSentenceIndex);
   };
 
   const changeSentence = (newIndex: number) => {
     if (newIndex < 0 || newIndex >= sentences.length) return;
     const wasPlaying = isPlaying || (audioRef.current && !audioRef.current.paused);
     setCurrentSentenceIndex(newIndex);
-    if (wasPlaying) {
-        handlePlay(newIndex);
-    } else {
-        setIsPlaying(false);
-    }
+    if (wasPlaying) handlePlay(newIndex); else setIsPlaying(false);
   };
 
   const renderText = (text: string) => {
@@ -200,18 +187,27 @@ export default function Refined() {
 
             <div className="pt-6 border-t">
                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input 
-                        type="checkbox" 
-                        checked={sentenceFocusMode} 
-                        onChange={e => setSentenceFocusMode(e.target.checked)}
-                        className="w-5 h-5 accent-black"
-                    />
+                    <input type="checkbox" checked={sentenceFocusMode} onChange={e => setSentenceFocusMode(e.target.checked)} className="w-5 h-5 accent-black" />
                     <span className="text-[1.1em] font-bold">Focus Mode</span>
                  </label>
             </div>
             
             <div className="pt-6 border-t space-y-4">
-                 <Label className="text-[1.1em] font-bold">Audio Speed: {speed}x</Label>
+                 <div className="flex justify-between items-center">
+                    <Label className="text-[1.1em] font-bold">Narrator Voice</Label>
+                 </div>
+                 <Select value={voice} onValueChange={setVoice}>
+                    <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select a voice" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {VOICES.map(v => (
+                            <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                 </Select>
+
+                 <Label className="text-[1.1em] font-bold block pt-2">Audio Speed: {speed}x</Label>
                  <Slider min={0.5} max={2} step={0.25} value={[speed]} onValueChange={v => setSpeed(v[0])} />
             </div>
         </div>
@@ -223,7 +219,6 @@ export default function Refined() {
             <h2 className="font-bold text-[2em]">Refined Text</h2>
         </div>
 
-        {/* Removed fixed leading-relaxed to respect sidebar Line Height */}
         <div className="flex-grow overflow-y-auto mb-24 space-y-4 text-[1.1em]">
             {isLoadingAI ? (
                 <div className="animate-pulse text-gray-400">Processing text...</div>
@@ -253,19 +248,8 @@ export default function Refined() {
                 <SkipBack size={28} />
             </Button>
             
-            <Button 
-                size="icon" 
-                className="h-14 w-14 rounded-full shadow-lg transition-transform hover:scale-105" 
-                onClick={togglePlayPause}
-                disabled={isBuffering}
-            >
-                {isBuffering ? (
-                    <Loader2 className="animate-spin" /> 
-                ) : isPlaying ? (
-                    <Pause size={32} /> 
-                ) : (
-                    <Play size={32} className="ml-1" />
-                )}
+            <Button size="icon" className="h-14 w-14 rounded-full shadow-lg transition-transform hover:scale-105" onClick={togglePlayPause} disabled={isBuffering}>
+                {isBuffering ? <Loader2 className="animate-spin" /> : isPlaying ? <Pause size={32} /> : <Play size={32} className="ml-1" />}
             </Button>
 
             <Button variant="ghost" size="icon" onClick={() => changeSentence(currentSentenceIndex + 1)}>
