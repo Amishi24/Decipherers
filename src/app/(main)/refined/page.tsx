@@ -91,6 +91,16 @@ export default function Refined() {
                 body: JSON.stringify({ inputText: sourceText, readingLevel: level })
             });
             const data = await res.json();
+
+            if (!res.ok) {
+                setSegments([{ 
+                    original: sourceText, 
+                    simplified: "⚠️ AI models are currently unavailable. Please try again in a moment.", 
+                    confidence: 0 
+                }]);
+                setSummary("Could not generate summary.");
+                return;
+            }
             
             if (Array.isArray(data.rephrased)) {
                 setSegments(data.rephrased);
@@ -98,7 +108,15 @@ export default function Refined() {
                 setSegments([{ original: sourceText, simplified: data.rephrased || "", confidence: 100 }]);
             }
             if (data.summary) setSummary(data.summary);
-        } catch (e) { console.error("AI Error", e); } 
+        } catch (e) { 
+            console.error("AI Error", e);
+            setSegments([{ 
+                original: sourceText, 
+                simplified: "⚠️ Connection error. Please try again.", 
+                confidence: 0 
+            }]);
+            setSummary("Could not generate summary.");
+        } 
         finally { setIsLoadingAI(false); }
     };
     fetchAI();
