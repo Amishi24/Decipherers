@@ -6,7 +6,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "get_page_text") {
       const text = getVisibleText();
       console.log("Scraped text length:", text.length);
-      sendResponse({ text: text });
+      sendResponse({ 
+          text: text,
+          title: document.title || "Untitled Page",
+          url: window.location.hostname // Just the domain is cleaner
+      });
     }
     return true; 
 });

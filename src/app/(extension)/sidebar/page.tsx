@@ -9,6 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"; 
 import { toBionic } from "@/lib/bionic";
+import { Download, RotateCcw, MessageSquare, X } from "lucide-react"; // Icon
+import { generateSmartPDF } from "@/lib/pdf-gen"; // Our new tool
 
 const THEMES = [
   { name: "Green", value: "green", bg: "#d3efd7", text: "#1F2933" },
@@ -56,6 +58,9 @@ export default function SidebarPage() {
   const [summary, setSummary] = useState("");
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   const [activeTab, setActiveTab] = useState("read");
+  // Add these near other state variables
+  const [pageTitle, setPageTitle] = useState("");
+  const [pageUrl, setPageUrl] = useState("");
 
   // Settings
   const [level, setLevel] = useState("moderate");
@@ -82,6 +87,22 @@ export default function SidebarPage() {
   // Parsing State
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
 
+  // --- BOT STATE ---
+  const [isListening, setIsListening] = useState(false);
+  const [botResponse, setBotResponse] = useState("");
+  const [lastQuestion, setLastQuestion] = useState("");
+  const [isBotThinking, setIsBotThinking] = useState(false);
+  const [isBotSpeaking, setIsBotSpeaking] = useState(false);
+  const [isBotPaused, setIsBotPaused] = useState(false);
+  
+  // Refs for Bot
+  const recognitionRef = useRef<any>(null);
+  const botGenId = useRef(0);
+
+  // CRITICAL: If running as a real extension file, change this to "https://your-domain.com"
+  // If running on localhost/same domain, leave it empty.
+  const API_BASE = "";
+
   // --- 1. APPLY VISUAL SETTINGS ---
   const containerStyle = {
     fontFamily: font.family,
@@ -97,6 +118,8 @@ export default function SidebarPage() {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === "DECIPHER_TEXT") {
         setSourceText(event.data.text);
+        setPageTitle(event.data.title); 
+        setPageUrl(event.data.url);
       }
     };
     window.addEventListener("message", handleMessage);
@@ -233,6 +256,171 @@ export default function SidebarPage() {
     return text;
   };
 
+  // --- BOT LOGIC ---
+
+  // 1. Speak Response
+  const speakBotResponse = async (text: string) => {
+    // Stop other audio
+    window.speechSynthesis.cancel();
+    if (audioRef.current) audioRef.current.pause();
+    
+    // Stop existing bot audio
+    if ((window as any).botAudio) {
+        (window as any).botAudio.pause();
+        (window as any).botAudio = null;
+    }
+
+    const myId = ++botGenId.current;
+    setIsBotThinking(true);
+    setIsBotSpeaking(false);
+
+    try {
+        // Uses your voice/speed state + API_BASE
+        const res = await fetch(`${API_BASE}/api/tts?text=${encodeURIComponent(text)}&voice=${voice}&speed=${speed}`);
+        const data = await res.json();
+
+        if (myId !== botGenId.current) return; // Cancel if new request came in
+
+        if (data.base64Chunks?.[0]) {
+            const byteChars = atob(data.base64Chunks[0].base64);
+            const byteNums = new Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+            const blob = new Blob([new Uint8Array(byteNums)], { type: 'audio/mp3' });
+            const url = URL.createObjectURL(blob);
+
+            const audio = new Audio(url);
+            audio.onplay = () => { setIsBotThinking(false); setIsBotSpeaking(true); setIsBotPaused(false); };
+            audio.onended = () => { setIsBotSpeaking(false); setIsBotPaused(false); };
+            audio.onpause = () => { if (!audio.ended) { setIsBotPaused(true); setIsBotSpeaking(false); } };
+            
+            (window as any).botAudio = audio;
+            audio.play();
+        }
+    } catch (e) {
+        console.error("Bot TTS Error", e);
+        setIsBotThinking(false);
+    }
+  };
+
+  // 2. Fetch Answer
+  const fetchBotAnswer = async (question: string) => {
+    setIsBotThinking(true);
+    setLastQuestion(question);
+    
+    try {
+        const res = await fetch(`${API_BASE}/api/ai-process`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                mode: "chat", 
+                inputText: question, 
+                // Context from current segments
+                context: segments.map(s => s.simplified).join(" ") 
+            })
+        });
+        const { answer } = await res.json();
+        setBotResponse(answer);
+        speakBotResponse(answer);
+    } catch (e) {
+        console.error("Bot Error", e);
+        setIsBotThinking(false);
+    }
+  };
+
+  // 3. Microphone Handler (Robust Version)
+  const handleVoiceChat = () => {
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SpeechRecognition) return alert("Browser does not support voice input.");
+
+    // A. Clean up previous instances
+    if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) {}
+        recognitionRef.current = null;
+    }
+
+    // B. Stop any playing audio
+    window.speechSynthesis.cancel();
+    if ((window as any).botAudio) (window as any).botAudio.pause();
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognitionRef.current = recognition;
+
+    setIsListening(true);
+
+    // C. Safety Timer (5 seconds)
+    const safetyTimer = setTimeout(() => {
+        if (recognitionRef.current === recognition) {
+            recognition.abort(); // Triggers 'aborted' error (caught below)
+            setIsListening(false);
+            recognitionRef.current = null;
+        }
+    }, 5000);
+
+    recognition.onresult = (event: any) => {
+        clearTimeout(safetyTimer);
+        const transcript = event.results[0][0].transcript;
+        setIsListening(false);
+        recognitionRef.current = null; 
+        fetchBotAnswer(transcript);
+    };
+
+    // D. SMART ERROR HANDLING
+    recognition.onerror = (event: any) => {
+        clearTimeout(safetyTimer);
+        
+        // 1. IGNORE "Fake" Errors
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+            setIsListening(false);
+            recognitionRef.current = null;
+            return; // Exit silently
+        }
+
+        // 2. HANDLE "Real" Errors
+        console.error("Mic Error:", event.error);
+        setIsListening(false);
+        recognitionRef.current = null; 
+
+        if (event.error === 'not-allowed') {
+            alert("Microphone access is blocked. \n\nIf you are using this in an iframe, ensure the iframe tag has 'allow=\"microphone\"'.");
+        }
+    };
+
+    recognition.onend = () => {
+        clearTimeout(safetyTimer);
+        setIsListening(false);
+    };
+
+    try { recognition.start(); } catch (e) { setIsListening(false); }
+  };
+
+  // 4. Audio Controls
+  const toggleBotAudio = () => {
+    const audio = (window as any).botAudio;
+    if (audio) {
+        if (audio.paused) { audio.play(); setIsBotPaused(false); setIsBotSpeaking(true); }
+        else { audio.pause(); setIsBotPaused(true); setIsBotSpeaking(false); }
+    } else if (botResponse) {
+        speakBotResponse(botResponse);
+    }
+  };
+
+  // 5. Hot Reload Effect (Updates Bot Voice when Settings Change)
+  useEffect(() => {
+    if (!botResponse) return;
+    const currentAudio = (window as any).botAudio;
+    const wasPlaying = currentAudio && !currentAudio.paused;
+
+    if (wasPlaying || isBotThinking) {
+        speakBotResponse(botResponse); 
+    } else if (currentAudio) {
+        currentAudio.pause();
+        (window as any).botAudio = null;
+    }
+  }, [voice, speed]);
+
   // --- 5. UNIFIED STYLE HELPER (Exact match to Website) ---
   const getUnifiedStyle = (index: number, confidence: number) => {
     const isActive = index === currentSentenceIndex;
@@ -271,7 +459,31 @@ export default function SidebarPage() {
       {/* --- HEADER --- */}
       <div className="p-4 border-b flex justify-between items-center bg-black/5 shadow-sm relative z-40">
         <h1 className="font-bold text-xl">Decipher.io</h1>
-        {isLoadingAI && <Loader2 className="animate-spin h-5 w-5 opacity-70" />}
+        <div className="flex gap-2">
+            {/* NEW DOWNLOAD BUTTON */}
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            disabled={segments.length === 0}
+            onClick={() => generateSmartPDF({
+                title: pageTitle,
+                sourceUrl: pageUrl,
+                summary: summary,
+                segments: segments,
+                settings: {
+                    fontLabel: font.name,        // e.g., 'mono'
+                    fontSize: fontSize,        // e.g., 18
+                    lineHeight: lineHeight,    // e.g., 1.6
+                    letterSpacing: letterSpacing,
+                    bionicEnabled: bionicMode // e.g., 0.5
+                }
+            })}
+            title="Download PDF"
+          >
+            <Download className="w-5 h-5 opacity-70" />
+          </Button>
+          {isLoadingAI && <Loader2 className="animate-spin h-5 w-5 opacity-70" />}
+        </div>
       </div>
 
       {!sourceText ? (
@@ -496,6 +708,72 @@ export default function SidebarPage() {
 
         </Tabs>
       )}
+      {/* --- SIDEBAR BOT INTERFACE --- */}
+      <div className="fixed bottom-4 right-4 z-[100] flex flex-col items-end gap-3 pointer-events-auto">
+        
+        {/* Response Bubble */}
+        {(botResponse || isBotThinking) && (
+            <div className="bg-white border border-gray-300 p-3 rounded-xl shadow-xl w-64 relative animate-in slide-in-from-bottom-2">
+                
+                {/* Close Button */}
+                <button 
+                    onClick={() => { 
+                        setBotResponse(""); 
+                        window.speechSynthesis.cancel(); 
+                        if((window as any).botAudio) (window as any).botAudio.pause(); 
+                    }} 
+                    className="absolute -top-2 -right-2 bg-gray-200 hover:bg-red-500 hover:text-white text-gray-600 rounded-full p-1 transition-colors"
+                >
+                    <X size={12} />
+                </button>
+
+                {/* Content */}
+                {isBotThinking ? (
+                    <div className="flex items-center gap-2 text-gray-500 text-sm">
+                        <Loader2 className="animate-spin text-blue-500" size={16} />
+                        <span>Thinking...</span>
+                    </div>
+                ) : (
+                    <div className="space-y-2">
+                        <div className="text-sm font-medium leading-relaxed max-h-[150px] overflow-y-auto pr-1">
+                            {botResponse}
+                        </div>
+                        
+                        {/* Compact Controls */}
+                        <div className="flex items-center gap-1 pt-2 border-t mt-1">
+                             <Button variant="ghost" size="sm" onClick={toggleBotAudio} className="h-6 px-2 text-xs">
+                                {isBotSpeaking ? <Pause size={12}/> : <Play size={12}/>}
+                             </Button>
+                             <Button variant="ghost" size="sm" onClick={() => speakBotResponse(botResponse)} className="h-6 px-2 text-xs">
+                                <RotateCcw size={12} />
+                             </Button>
+                             <div className="flex-grow" />
+                             <Button variant="ghost" size="sm" onClick={() => fetchBotAnswer(lastQuestion)} className="h-6 px-2 text-xs text-gray-500">
+                                <MessageSquare size={12} />
+                             </Button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        )}
+
+        {/* Floating Mic Button */}
+        <Button 
+            onClick={handleVoiceChat}
+            disabled={isBotThinking}
+            className={`h-14 w-14 rounded-full shadow-xl border-2 border-white transition-all duration-300 ${
+                isListening 
+                ? "bg-red-500 hover:bg-red-600 scale-110 animate-pulse" 
+                : "bg-black hover:bg-gray-800"
+            }`}
+        >
+            {isListening ? (
+                <Loader2 className="animate-spin text-white" size={24} /> 
+            ) : (
+                <Mic size={24} className="text-white" />
+            )}
+        </Button>
+      </div>
     </div>
     </TooltipProvider>
   );

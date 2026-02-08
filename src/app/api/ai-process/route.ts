@@ -17,17 +17,39 @@ async function getNliClassifier() {
 
 export async function POST(req: Request) {
   try {
-    const { inputText, readingLevel } = await req.json();
+    const body = await req.json();
+    const { inputText, readingLevel, mode, context } = body;
+    const MODEL_NAME = "gemini-2.5-flash"; // Or your preferred model
+
+    // --- FEATURE: CHAT BOT MODE ---
+    if (mode === "chat") {
+      if (!inputText) return NextResponse.json({ error: "No input provided" }, { status: 400 });
+      
+      const chatModel = genAI.getGenerativeModel({ model: MODEL_NAME });
+      const chatPrompt = `
+        You are an expert accessibility assistant for a user with dyslexia. 
+        Current Document Context: "${context ? context.slice(0, 5000) : "No context provided."}"
+        
+        User Question: "${inputText}"
+        
+        Task: Provide a helpful, kind, and CONCISE answer (max 2 sentences). 
+        Do not use complex words. Speak directly to the user.
+      `;
+      
+      const chatResult = await chatModel.generateContent(chatPrompt);
+      return NextResponse.json({ answer: chatResult.response.text() });
+    }
+
+    // --- STANDARD MODE: SIMPLIFICATION ---
     if (!inputText) return NextResponse.json({ error: "No text provided" }, { status: 400 });
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
     let complexityInstruction = "";
-    if (readingLevel === 'mild') complexityInstruction = "Keep most original vocabulary. Just fix complex grammar. Do NOT simplify too much.";
+    if (readingLevel === 'mild') complexityInstruction = "Keep most original vocabulary. Just fix complex grammar.";
     if (readingLevel === 'moderate') complexityInstruction = "Simplify academic jargon to standard English. High school level.";
     if (readingLevel === 'severe') complexityInstruction = "Simplify A LOT. Basic words only. Short sentences. Explain like I'm 5.";
 
-    // UPDATED PROMPT: Asks for both 'rephrased' array AND 'summary' string
     const prompt = `
       You are an expert accessibility assistant. 
       Task: Simplify the text below.
@@ -64,8 +86,6 @@ export async function POST(req: Request) {
 
     // --- PART B: THE "JUDGE" (NLI Check) ---
     const classifier = await getNliClassifier();
-    
-    // If the model didn't return an array for some reason, handle it
     const segments = Array.isArray(parsedData.rephrased) ? parsedData.rephrased : [];
 
     const verifiedSegments = await Promise.all(segments.map(async (seg: any) => {

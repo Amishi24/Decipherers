@@ -48,7 +48,9 @@ function sendMessageToTab(tabId, allowRetry = true) {
       if (iframe && iframe.contentWindow) {
          iframe.contentWindow.postMessage({ 
              type: "DECIPHER_TEXT", 
-             text: response.text 
+             text: response.text,
+             title: response.title,
+             url: response.url
          }, "*");
       }
     }

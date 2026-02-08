@@ -34,6 +34,7 @@ export default function UploadPage() {
       }
 
       sessionStorage.setItem("pdfText", text);
+      sessionStorage.setItem("pdfName", file.name.replace(/\.[^/.]+$/, ""));
       
       setStatusText("Refining text...");
       router.push("/refined");

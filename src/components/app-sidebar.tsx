@@ -91,6 +91,10 @@ export function AppSidebar({
       openDyslexia.className, verdana.className
     );
     if (font) document.body.classList.add(font);
+    const selectedFont = fonts.find(f => f.value === font);
+    if (selectedFont) {
+        sessionStorage.setItem("selectedFontLabel", selectedFont.label);
+    }
   }, [font]);
 
   // Handle Bionic Mode Broadcast
