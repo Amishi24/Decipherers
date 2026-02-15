@@ -91,10 +91,11 @@ export function AppSidebar({
       openDyslexia.className, verdana.className
     );
     if (font) document.body.classList.add(font);
+
+    // Store the selected font label for PDF generation
     const selectedFont = fonts.find(f => f.value === font);
-    if (selectedFont) {
-        sessionStorage.setItem("selectedFontLabel", selectedFont.label);
-    }
+    sessionStorage.setItem("selectedFontLabel", selectedFont?.label || "Sans");
+    window.dispatchEvent(new Event("fontChanged"));
   }, [font]);
 
   // Handle Bionic Mode Broadcast
